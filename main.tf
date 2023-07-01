@@ -14,7 +14,7 @@ terraform {
 provider "kubernetes" {
   config_path    = "~/.kube/config"
   # from k config view | grep -A 3 minikube | grep server:
-  host           = "https://192.168.59.100:8443"
+  host           = "https://240.1.0.2:8443"
   config_context = "minikube"
 }
 provider "helm" {
@@ -31,22 +31,22 @@ resource "kubernetes_namespace_v1" "pf1ns" {
     }
   }
 }
-resource "kubernetes_deployment_v1" "pf1deploy" {
+resource "kubernetes_deployment_v1" "promfiberdeploy" {
   metadata {
-    name      = "pf1deploy"
+    name      = "promfiberdeploy"
     namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
   }
   spec {
     selector {
       match_labels = {
-        app = "pf1"
+        app = "promfiber"
       }
     }
     replicas = "1"
     template {
       metadata {
         labels = {
-          app = "pf1"
+          app = "promfiber"
         }
         annotations = {
           "prometheus.io/path"   = "/metrics"
@@ -57,7 +57,7 @@ resource "kubernetes_deployment_v1" "pf1deploy" {
       spec {
         container {
           name  = "pf1"
-          image = "kokizzu/pf1"
+          image = "kokizzu/pf1:v0001" # from promfiber.go
           port {
             container_port = 3000
           }
@@ -73,11 +73,11 @@ resource "kubernetes_service_v1" "pf1svc" {
   }
   spec {
     selector = {
-      app = kubernetes_deployment_v1.pf1deploy.spec.0.template.0.metadata.0.labels.app
+      app = kubernetes_deployment_v1.promfiberdeploy.spec.0.template.0.metadata.0.labels.app
     }
     port {
       port        = 33000 # no effect in minikube, will forwarded to random port anyway
-      target_port = kubernetes_deployment_v1.pf1deploy.spec.0.template.0.spec.0.container.0.port.0.container_port
+      target_port = kubernetes_deployment_v1.promfiberdeploy.spec.0.template.0.spec.0.container.0.port.0.container_port
     }
     type = "NodePort"
   }
@@ -221,9 +221,9 @@ resource "kubernetes_stateful_set_v1" "prom1stateful" {
             name       = "prom1datastorage"
             mount_path = "/prometheus/"
           }
-          #          security_context {
-          #            run_as_group = "1000" # because /tmp/prom1data is owned by 1000
-          #          }
+          #security_context {
+          #  run_as_group = "1000" # because /tmp/prom1data is owned by 1000
+          #}
         }
         volume {
           name = kubernetes_config_map_v1.prom1conf.metadata.0.name
@@ -264,21 +264,22 @@ resource "helm_release" "pf1keda" {
   repository = "https://kedacore.github.io/charts"
   chart      = "keda"
   namespace  = kubernetes_namespace_v1.pf1ns.metadata.0.name
-  # uninstall: https://keda.sh/docs/2.10/deploy/#helm
+  # uninstall: https://keda.sh/docs/2.11/deploy/#helm
 }
+# run with this commented first, then uncomment
 # from: https://www.youtube.com/watch?v=1kEKrhYMf_g
 resource "kubernetes_manifest" "scaled_object" {
   manifest = {
     "apiVersion" = "keda.sh/v1alpha1"
     "kind"       = "ScaledObject"
     "metadata"   = {
-      "name"      = "pf1keda"
+      "name"      = "pf1scaledobject"
       "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
     }
     "spec" = {
       "scaleTargetRef" = {
         "apiVersion" = "apps/v1"
-        "name"       = kubernetes_deployment_v1.pf1deploy.metadata.0.name
+        "name"       = kubernetes_deployment_v1.promfiberdeploy.metadata.0.name
         "kind"       = "Deployment"
       }
       "minReplicaCount" = 1
@@ -288,114 +289,12 @@ resource "kubernetes_manifest" "scaled_object" {
           "type"     = "prometheus"
           "metadata" = {
             "serverAddress" = "http://prom1svc.pf1ns.svc.cluster.local:10902"
-            "threshold"     = "10"
-            "query"         = "sum(rate(http_requests_total{kubernetes_namespace=\"pf1ns\"}[1m]))"
+            "threshold"     = "100"
+            "query"         = "sum(irate(http_requests_total[1m]))"
+            # with or without {service=\"promfiber\"} is the same since 1 service 1 pod in our case
           }
         }
       ]
     }
   }
 }
-
-# failed attempt:
-#resource "kubernetes_config_map_v1" "pf1adapterconf" {
-#  metadata {
-#    name      = "pf1adapterconf"
-#    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
-#  }
-#  data = {
-#    "config.yaml" : <<EOF
-#rules:
-#- seriesQuery: 'http_requests_total{kubernetes_namespace="pf1ns"}'
-#  resources:
-#    overrides:
-#      kubernetes_namespace: {resource: "namespace"}
-#      kubernetes_pod_name: {resource: "pod"}
-#  name:
-#    matches: "^(.*)_total"
-#    as: "${1}_per_second"
-#  metricsQuery: 'sum(rate(<<.Series>>{<<.LabelMatchers>>}[1m])) by (<<.GroupBy>>)'
-#EOF
-#  }
-#}
-#resource "kubernetes_deployment_v1" "pf1custommetricapi" {
-#  metadata {
-#    name      = "pf1custommetricapi"
-#    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
-#  }
-#  spec {
-#    replicas = "1"
-#    selector {
-#      match_labels = {
-#        app = "pf1custommetricapi"
-#      }
-#    }
-#    template {
-#      metadata {
-#        labels = {
-#          app = "pf1custommetricapi"
-#        }
-#        name = "pf1custommetricapi"
-#      }
-#      spec {
-#        #service_account_name = "monitoring"
-#        # https://github.com/kubernetes-sigs/prometheus-adapter
-#        container {
-#          name  = "pf1custommetricapi"
-#          image = "quay.io/coreos/k8s-prometheus-adapter-amd64:v0.8.4"
-#          args  = [
-#            "/adapter",
-#            "--logtostderr=true",
-#            "--prometheus-url=http://${kubernetes_ingress_v1.pf1ingress.spec.0.rule.0.host}:${kubernetes_service_v1.prom1svc.spec.0.port.0.port}/metrics",
-#            "--metrics-relist-interval=1m",
-#            "--v=10",
-#            "--config=/etc/adapter/config.yaml",
-#            "--cert-dir=/tmp"
-#          ]
-#          port {
-#            container_port = 443
-#          }
-#          volume_mount {
-#            mount_path = "/etc/adapter"
-#            name       = "pf1adapterconfstorage"
-#            read_only  = true
-#          }
-#        }
-#        volume {
-#          name = "pf1adapterconfstorage"
-#          config_map {
-#            name = kubernetes_config_map_v1.pf1adapterconf.metadata.0.name
-#          }
-#        }
-#      }
-#    }
-#  }
-#}
-#resource "kubernetes_horizontal_pod_autoscaler_v2" "pf1autoscale" {
-#  metadata {
-#    name      = "pf1autoscale"
-#    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
-#  }
-#  spec {
-#    max_replicas = 5
-#    min_replicas = 1
-#    scale_target_ref {
-#      api_version = "apps/v1"
-#      kind        = "Deployment"
-#      name        = kubernetes_deployment_v1.pf1deploy.metadata.0.name
-#    }
-#    metric {
-#      type = "Pods"
-#      pods {
-#        metric {
-#          name = "http_requests"
-#        }
-#        target {
-#          type          = "Value"
-#          average_value = 1000
-#        }
-#      }
-#    }
-#  }
-#
-#}

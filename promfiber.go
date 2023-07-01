@@ -15,7 +15,7 @@ func main() {
 	// NOTE: Following is not available in v1
 	// labels := map[string]string{"custom_label1":"custom_value1", "custom_label2":"custom_value2"}
 	// fiberprometheus.NewWithLabels(labels, namespace, subsystem )
-	prometheus := fiberprometheus.New("my-service-name")
+	prometheus := fiberprometheus.New("promfiber")
 	prometheus.RegisterAt(app, "/metrics")
 	app.Use(prometheus.Middleware)
 
