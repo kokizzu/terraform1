@@ -266,44 +266,19 @@ resource "kubernetes_ingress_v1" "pf1ingress" {
 # manually:
 # helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 # helm search repo prometheus-community
-# helm install pf1prom prometheus-community/kube-prometheus-stack -n pf1ns
+# helm install globalprom prometheus-community/kube-prometheus-stack -n default
 # will automatically create node exporter grafana and all others
-resource "helm_release" "pf1prom" {
-  name       = "pf1prom"
+resource "helm_release" "globalprom" {
+  name       = "globalprom"
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "kube-prometheus-stack"
-  namespace  = kubernetes_namespace_v1.pf1ns.metadata.0.name
+  namespace  = "default"
   # uninstall: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack#kube-prometheus-stack
 }
-resource "kubernetes_manifest" "pf1prompodmonitor" {
-  manifest = {
-    "apiVersion" = "monitoring.coreos.com/v1"
-    "kind"       = "PodMonitor"
-    "metadata"   = {
-      "name"      = "pf1prompodmonitor"
-      "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
-      "labels"    = {
-        "name" = "pf1podmonitor"
-      }
-    }
-    "spec" = {
-      "selector" = {
-        "matchLabels" = {
-          "app" = kubernetes_deployment_v1.promfiberdeploy.spec.0.selector.0.match_labels.app
-        }
-      }
-      "podMetricsEndpoints" = [
-        {
-          "port" = kubernetes_deployment_v1.promfiberdeploy.spec.0.template.0.spec.0.container.0.port.0.container_port
-        }
-      ]
-    }
-  }
-}
-resource "kubernetes_service_v1" "pf1promsvc" {
+resource "kubernetes_service_v1" "globalpromsvc" {
   metadata {
-    name      = "pf1promsvc"
-    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
+    name      = "globalpromsvc"
+    namespace = helm_release.globalprom.namespace
   }
   spec {
     selector = {
@@ -317,18 +292,68 @@ resource "kubernetes_service_v1" "pf1promsvc" {
     type = "NodePort"
   }
 }
-# set the target rules for above prometheus
+
+# TODO: still wrong
+resource "kubernetes_manifest" "promsvcuser" {
+  manifest = {
+    "apiVersion" = "rbac.authorization.k8s.io/v1"
+    "kind": "ClusterRoleBinding"
+    "metadata" = {
+      name = "promsvcuser"
+    }
+    "subjects" = [
+      {
+        "kind" = "ServiceAccount"
+        "name" = "pf1svcuser" # metadata.name
+        "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
+      }
+    ]
+    "roleRef" = {
+      "kind" = "ClusterRole"
+      "name" = "cluster-admin"
+      "apiGroup" = "rbac.authorization.k8s.io"
+    }
+  }
+}
+# set the target rules for prometheus below
+resource "kubernetes_manifest" "pf1prompodmonitor" {
+  manifest = {
+    "apiVersion" = "monitoring.coreos.com/v1"
+    "kind"       = "PodMonitor"
+    "metadata"   = {
+      "name"      = "pf1prompodmonitor"
+      "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
+      "labels"    = {
+        "name" = "pf1podmonitor"
+      }
+    }
+    "spec" = {
+      "selector"           = {
+        "matchLabels" = {
+          "app" = kubernetes_deployment_v1.promfiberdeploy.spec.0.selector.0.match_labels.app
+        }
+      }
+      "podMetricsEndpoints" = [
+        {
+          "port" = kubernetes_deployment_v1.promfiberdeploy.spec.0.template.0.spec.0.container.0.port.0.container_port
+        }
+      ]
+    }
+  }
+}
 # changing this requires rollout restart?
 # kubectl rollout restart statefulset prometheus-pf1prom -n pf1ns
 resource "kubernetes_manifest" "pf1prom" {
   manifest = {
     "apiVersion" = "monitoring.coreos.com/v1"
-    "kind" = "Prometheus"
-    "metadata" = {
-      "name" = "pf1prom"
+    "kind"       = "Prometheus"
+    "metadata"   = {
+      "name"      = "pf1prom"
       "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
     }
     "spec" = {
+      # if error check k get events -n pf1ns
+      "serviceAccountName" = kubernetes_manifest.promsvcuser.manifest.subjects.0.name
       "podMonitorSelector" = {
         "matchLabels" = {
           "name" = kubernetes_manifest.pf1prompodmonitor.manifest.metadata.labels.name
@@ -342,9 +367,9 @@ resource "kubernetes_manifest" "pf1prom" {
     }
   }
 }
-resource "kubernetes_service_v1" "pf1promsvc2" {
+resource "kubernetes_service_v1" "pf1promsvc" {
   metadata {
-    name      = "pf1promsvc2"
+    name      = "pf1promsvc"
     namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
   }
   spec {
