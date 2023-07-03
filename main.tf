@@ -267,6 +267,7 @@ resource "kubernetes_ingress_v1" "pf1ingress" {
 # helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 # helm search repo prometheus-community
 # helm install pf1prom prometheus-community/kube-prometheus-stack -n pf1ns
+# will automatically create node exporter grafana and all others
 resource "helm_release" "pf1prom" {
   name       = "pf1prom"
   repository = "https://prometheus-community.github.io/helm-charts"
@@ -312,6 +313,48 @@ resource "kubernetes_service_v1" "pf1promsvc" {
       target_port = 9090 # default port for prometheus-pf1prom-kube-prometheus-st-prometheus-0 pod
       port        = 9091
       node_port   = 30900
+    }
+    type = "NodePort"
+  }
+}
+# set the target rules for above prometheus
+# changing this requires rollout restart?
+# kubectl rollout restart statefulset prometheus-pf1prom -n pf1ns
+resource "kubernetes_manifest" "pf1prom" {
+  manifest = {
+    "apiVersion" = "monitoring.coreos.com/v1"
+    "kind" = "Prometheus"
+    "metadata" = {
+      "name" = "pf1prom"
+      "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
+    }
+    "spec" = {
+      "podMonitorSelector" = {
+        "matchLabels" = {
+          "name" = kubernetes_manifest.pf1prompodmonitor.manifest.metadata.labels.name
+        }
+      }
+      "resources" = {
+        "requests" = {
+          "memory" = "400Mi"
+        }
+      }
+    }
+  }
+}
+resource "kubernetes_service_v1" "pf1promsvc2" {
+  metadata {
+    name      = "pf1promsvc2"
+    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
+  }
+  spec {
+    selector = {
+      "prometheus" = kubernetes_manifest.pf1prom.manifest.metadata.name
+    }
+    port {
+      target_port = 9090 # default port for prometheus-pf1prom-0
+      port        = 9092
+      node_port   = 30901
     }
     type = "NodePort"
   }
