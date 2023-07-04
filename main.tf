@@ -338,6 +338,8 @@ resource "kubernetes_cluster_role_binding_v1" "pf1promsvcrole" {
     namespace = var.nsname
   }
 }
+# changing this sometimes requires rollout restart (sometimes config not reloaded automatically)
+# kubectl rollout restart statefulset prometheus-pf1prom -n pf1ns
 resource "kubernetes_manifest" "pf1prompodmonitor" {
   manifest = {
     "apiVersion" = "monitoring.coreos.com/v1"
@@ -349,6 +351,8 @@ resource "kubernetes_manifest" "pf1prompodmonitor" {
         "name" = "pf1podmonitor"
       }
     }
+    # check generated config on prometheus gui or with kubectl:
+    # k -n pf1ns get secret prometheus-pf1prom -ojson | jq -r '.data["prometheus.yaml.gz"]' | base64 -d | gunzip
     "spec" = {
       "selector" = {
         "matchLabels" = {
@@ -363,14 +367,14 @@ resource "kubernetes_manifest" "pf1prompodmonitor" {
       "podMetricsEndpoints" = [
         {
           "interval" = "5s"
-          "port"     = kubernetes_deployment_v1.promfiberdeploy.spec.0.template.0.spec.0.container.0.port.0.container_port
+          # this line should not be filled, or it would generate _port_name regex rule match
+          # which causing podmonitor will never match anything
+          #"port"     = ...
         }
       ]
     }
   }
 }
-# changing this requires rollout restart?
-# kubectl rollout restart statefulset prometheus-pf1prom -n pf1ns
 resource "kubernetes_manifest" "pf1prom" {
   manifest = {
     "apiVersion" = "monitoring.coreos.com/v1"
@@ -441,9 +445,10 @@ resource "kubernetes_manifest" "pf1kedascaledobject" {
       "maxReplicaCount" = 5
       "triggers"        = [
         {
+          # if doesn't work (wrong hostname/port), check pod log of keda-operator
           "type"     = "prometheus"
           "metadata" = {
-            "serverAddress" = "http://prom1svc.pf1ns.svc.cluster.local:10902"
+            "serverAddress" = "http://${kubernetes_service_v1.pf1promsvc.metadata.0.name}.${var.nsname}.svc.cluster.local:${kubernetes_service_v1.pf1promsvc.spec.0.port.0.port}"
             "threshold"     = "100"
             "query"         = "sum(irate(http_requests_total[1m]))"
             # with or without {service=\"promfiber\"} is the same since 1 service 1 pod in our case
