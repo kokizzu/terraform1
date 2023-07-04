@@ -11,6 +11,9 @@ terraform {
     path = "./pf1.tfstate"
   }
 }
+variable "nsname" {
+  default = "pf1ns"
+}
 provider "kubernetes" {
   config_path    = "~/.kube/config"
   # from: k config view | grep -A 3 minikube | grep server:
@@ -35,7 +38,7 @@ resource "kubernetes_namespace_v1" "pf1ns" {
 resource "kubernetes_deployment_v1" "promfiberdeploy" {
   metadata {
     name      = "promfiberdeploy"
-    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
+    namespace = var.nsname
   }
   spec {
     selector {
@@ -70,7 +73,7 @@ resource "kubernetes_deployment_v1" "promfiberdeploy" {
 resource "kubernetes_service_v1" "pf1svc" {
   metadata {
     name      = "pf1svc"
-    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
+    namespace = var.nsname
   }
   spec {
     selector = {
@@ -87,7 +90,7 @@ resource "kubernetes_service_v1" "pf1svc" {
 resource "kubernetes_ingress_v1" "pf1ingress" {
   metadata {
     name        = "pf1ingress"
-    namespace   = kubernetes_namespace_v1.pf1ns.metadata.0.name
+    namespace   = var.nsname
     annotations = {
       "kubernetes.io/ingress.class" = "nginx"
     }
@@ -115,7 +118,7 @@ resource "kubernetes_ingress_v1" "pf1ingress" {
 #resource "kubernetes_config_map_v1" "prom1conf" {
 #  metadata {
 #    name      = "prom1conf"
-#    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
+#    namespace = var.nsname
 #  }
 #  data = {
 #    # from https://github.com/techiescamp/kubernetes-prometheus/blob/master/config-map.yaml
@@ -166,7 +169,7 @@ resource "kubernetes_ingress_v1" "pf1ingress" {
 #resource "kubernetes_persistent_volume_claim_v1" "prom1dataclaim" {
 #  metadata {
 #    name      = "prom1dataclaim"
-#    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
+#    namespace = var.nsname
 #  }
 #  spec {
 #    # do not add storage_class_name or it would stuck
@@ -181,7 +184,7 @@ resource "kubernetes_ingress_v1" "pf1ingress" {
 #resource "kubernetes_stateful_set_v1" "prom1stateful" {
 #  metadata {
 #    name      = "prom1stateful"
-#    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
+#    namespace = var.nsname
 #    labels    = {
 #      app = "prom1"
 #    }
@@ -249,7 +252,7 @@ resource "kubernetes_ingress_v1" "pf1ingress" {
 #resource "kubernetes_service_v1" "prom1svc" {
 #  metadata {
 #    name      = "prom1svc"
-#    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
+#    namespace = var.nsname
 #  }
 #  spec {
 #    selector = {
@@ -292,43 +295,59 @@ resource "kubernetes_service_v1" "globalpromsvc" {
     type = "NodePort"
   }
 }
-
-# TODO: still wrong
-resource "kubernetes_manifest" "promsvcuser" {
-  manifest = {
-    "apiVersion" = "rbac.authorization.k8s.io/v1"
-    "kind": "ClusterRoleBinding"
-    "metadata" = {
-      name = "promsvcuser"
-    }
-    "subjects" = [
-      {
-        "kind" = "ServiceAccount"
-        "name" = "pf1svcuser" # metadata.name
-        "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
-      }
-    ]
-    "roleRef" = {
-      "kind" = "ClusterRole"
-      "name" = "cluster-admin"
-      "apiGroup" = "rbac.authorization.k8s.io"
-    }
+resource "kubernetes_service_account_v1" "pf1promsvcacc" {
+  metadata {
+    name      = "pf1promsvcacc"
+    namespace = var.nsname
   }
 }
-# set the target rules for prometheus below
+resource "kubernetes_cluster_role_v1" "promrole" {
+  metadata {
+    name = "promrole"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["services", "endpoints", "pods"]
+    verbs      = ["get", "list", "watch"]
+  }
+  rule {
+    api_groups = ["extensions"]
+    resources  = ["ingresses"]
+    verbs      = ["get", "list", "watch"]
+  }
+  rule {
+    api_groups = ["networking.k8s.io"]
+    resources  = ["ingresses"]
+    verbs      = ["get", "list", "watch"]
+  }
+}
+resource "kubernetes_cluster_role_binding_v1" "pf1promsvcrole" {
+  metadata {
+    name = "pf1promsvcrole"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.promrole.metadata.0.name
+  }
+  subject {
+    kind = "ServiceAccount"
+    name = kubernetes_service_account_v1.pf1promsvcacc.metadata.0.name
+  }
+}
 resource "kubernetes_manifest" "pf1prompodmonitor" {
   manifest = {
     "apiVersion" = "monitoring.coreos.com/v1"
     "kind"       = "PodMonitor"
     "metadata"   = {
       "name"      = "pf1prompodmonitor"
-      "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
+      "namespace" = var.nsname
       "labels"    = {
         "name" = "pf1podmonitor"
       }
     }
     "spec" = {
-      "selector"           = {
+      "selector" = {
         "matchLabels" = {
           "app" = kubernetes_deployment_v1.promfiberdeploy.spec.0.selector.0.match_labels.app
         }
@@ -349,11 +368,11 @@ resource "kubernetes_manifest" "pf1prom" {
     "kind"       = "Prometheus"
     "metadata"   = {
       "name"      = "pf1prom"
-      "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
+      "namespace" = var.nsname
     }
     "spec" = {
       # if error check k get events -n pf1ns
-      "serviceAccountName" = kubernetes_manifest.promsvcuser.manifest.subjects.0.name
+      "serviceAccountName" = kubernetes_service_account_v1.pf1promsvcacc.metadata.0.name
       "podMonitorSelector" = {
         "matchLabels" = {
           "name" = kubernetes_manifest.pf1prompodmonitor.manifest.metadata.labels.name
@@ -370,7 +389,7 @@ resource "kubernetes_manifest" "pf1prom" {
 resource "kubernetes_service_v1" "pf1promsvc" {
   metadata {
     name      = "pf1promsvc"
-    namespace = kubernetes_namespace_v1.pf1ns.metadata.0.name
+    namespace = var.nsname
   }
   spec {
     selector = {
@@ -388,7 +407,7 @@ resource "helm_release" "pf1keda" {
   name       = "pf1keda"
   repository = "https://kedacore.github.io/charts"
   chart      = "keda"
-  namespace  = kubernetes_namespace_v1.pf1ns.metadata.0.name
+  namespace  = var.nsname
   # uninstall: https://keda.sh/docs/2.11/deploy/#helm
 }
 # run with this commented first, then uncomment
@@ -401,7 +420,7 @@ resource "kubernetes_manifest" "pf1kedascaledobject" {
     "kind"       = "ScaledObject"
     "metadata"   = {
       "name"      = "pf1kedascaledobject"
-      "namespace" = kubernetes_namespace_v1.pf1ns.metadata.0.name
+      "namespace" = var.nsname
     }
     "spec" = {
       "scaleTargetRef" = {
