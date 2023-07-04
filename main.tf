@@ -352,9 +352,15 @@ resource "kubernetes_manifest" "pf1prompodmonitor" {
           "app" = kubernetes_deployment_v1.promfiberdeploy.spec.0.selector.0.match_labels.app
         }
       }
+      "namespaceSelector" = {
+        "matchNames" = [
+          var.nsname
+        ]
+      }
       "podMetricsEndpoints" = [
         {
-          "port" = kubernetes_deployment_v1.promfiberdeploy.spec.0.template.0.spec.0.container.0.port.0.container_port
+          "interval" = "5s"
+          "port"     = kubernetes_deployment_v1.promfiberdeploy.spec.0.template.0.spec.0.container.0.port.0.container_port
         }
       ]
     }
