@@ -331,8 +331,11 @@ resource "kubernetes_cluster_role_binding_v1" "pf1promsvcrole" {
     name      = kubernetes_cluster_role_v1.promrole.metadata.0.name
   }
   subject {
-    kind = "ServiceAccount"
-    name = kubernetes_service_account_v1.pf1promsvcacc.metadata.0.name
+    # updating this doesn't automatically refresh pf1prompodmonitor and pf1prom, have to do this manually:
+    # k rollout restart statefulset prometheus-pf1prom -n pf1ns
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.pf1promsvcacc.metadata.0.name
+    namespace = var.nsname
   }
 }
 resource "kubernetes_manifest" "pf1prompodmonitor" {
