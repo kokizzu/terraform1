@@ -28,13 +28,9 @@ require (
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
 	golang.org/x/crypto v0.53.0
+	golang.org/x/image v0.44.0
 	golang.org/x/sys v0.46.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 )
 
 exclude golang.org/x/crypto v0.14.0
-
-exclude (
-	golang.org/x/image v0.0.0-20190227222117-0694c2d4d067
-	golang.org/x/image v0.0.0-20190802002840-cff245a6509b
-)
