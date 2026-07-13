@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mods="$(GOFLAGS=-mod=mod go list -m -f '{{.Path}} {{.Version}}' all)"
+mods="$(GOFLAGS=-mod=mod go list -m -f '{{.Path}} {{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' all)"
 
 version_key() {
   local version="${1#v}"

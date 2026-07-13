@@ -1,10 +1,14 @@
 # main.tf
 terraform {
-  required_version = ">= 1.3.0"
+  required_version = ">= 1.15.8"
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "= 2.20.0"
+      version = "= 3.2.1"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "= 3.2.0"
     }
   }
   backend "local" {
@@ -96,11 +100,13 @@ resource "kubernetes_ingress_v1" "pf1ingress" {
     }
   }
   spec {
+    ingress_class_name = "nginx"
     rule {
       host = "pf1svc.pf1ns.svc.cluster.local"
       http {
         path {
-          path = "/"
+          path      = "/"
+          path_type = "Prefix"
           backend {
             service {
               name = kubernetes_service_v1.pf1svc.metadata.0.name
