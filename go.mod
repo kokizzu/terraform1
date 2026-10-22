@@ -1,6 +1,6 @@
 module terraform1
 
-go 1.26.5
+go 1.26.10
 
 require (
 	github.com/ansrivas/fiberprometheus/v2 v2.17.0
