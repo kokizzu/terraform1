@@ -1,4 +1,4 @@
-FROM golang:1.20 as build1
+FROM golang:1.26.10 as build1
 WORKDIR /app1
 COPY go.mod go.sum promfiber.go .
 COPY vendor ./vendor
